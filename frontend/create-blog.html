@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Create Blog Post</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="connect-shopify.html">Connect Shopify</a>
+    <a href="shopify-posts.html">Shopify Blog Manager</a>
+    <a class="active" href="create-blog.html">Create Post</a>
+    <a href="import-sheets.html">Import Sheets</a>
+    <a href="history.html">History & Queue</a>
+    <button class="logout" type="button" onclick="logout()">Log out</button>
+  </nav>
+
+  <p class="eyebrow">Content Authoring</p>
+  <h1 id="page-title">Create & Publish Blog Post</h1>
+  <p class="lede">Write content, add featured imagery, and publish directly to the connected Shopify store or schedule for future automated release.</p>
+
+  <div class="card">
+    <label for="title">Post Title</label>
+    <input id="title" placeholder="e.g. 10 Essential Strategies for Modern E-Commerce Growth" />
+
+    <label for="content">Article Body Content</label>
+    <textarea id="content" rows="10" placeholder="Write or paste your article content here..."></textarea>
+
+    <label for="imageUrl">Featured Cover Image URL <span class="muted">(Optional — Shopify fetches it automatically)</span></label>
+    <input id="imageUrl" placeholder="https://images.unsplash.com/..." oninput="previewImage()" />
+    <div id="image-preview" style="display:none; margin-bottom:18px;">
+      <img id="preview-img" src="" alt="Cover preview" style="max-height:180px; border-radius:8px; border:1px solid #d4d8d1;" />
+    </div>
+
+    <div id="create-actions" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+      <button onclick="publishToShopifyNow()">Publish Directly to Shopify</button>
+      <button class="btn btn-secondary" onclick="saveLocalDraft()">Save Local Draft</button>
+    </div>
+
+    <div id="edit-actions" style="display:none; gap:10px; flex-wrap:wrap; margin-top:10px;">
+      <button onclick="saveShopifyEdit()">Save Changes</button>
+      <a href="shopify-posts.html" class="btn btn-secondary">Cancel</a>
+    </div>
+
+    <!-- Scheduling section -->
+    <div style="margin-top:24px; padding-top:18px; border-top:1px solid var(--line);">
+      <label for="scheduledFor">Or Schedule for Future Automated Publishing:</label>
+      <div style="display:flex; gap:10px; max-width:400px;">
+        <input id="scheduledFor" type="datetime-local" style="margin-bottom:0;" />
+        <button class="btn btn-secondary" onclick="schedulePost()">Schedule</button>
+      </div>
+    </div>
+
+    <div id="result" style="margin-top:18px;"></div>
+  </div>
+
+  <script>
+    const editParams = new URLSearchParams(window.location.search);
+    const editId = editParams.get("editId");
+    const editIsDraft = editParams.get("isDraft") === "true";
+
+    async function checkAuth() {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) window.location.href = "login.html";
+    }
+
+    function previewImage() {
+      const url = document.getElementById("imageUrl").value.trim();
+      const previewArea = document.getElementById("image-preview");
+      const img = document.getElementById("preview-img");
+      if (url.startsWith("http")) {
+        img.src = url;
+        previewArea.style.display = "block";
+      } else {
+        previewArea.style.display = "none";
+      }
+    }
+
+    function getFormData() {
+      const title = document.getElementById("title").value.trim();
+      const content = document.getElementById("content").value.trim();
+      const imageUrl = document.getElementById("imageUrl").value.trim() || null;
+      if (!title || !content) {
+        alert("Please provide both a title and article body content.");
+        return null;
+      }
+      return { title, content, imageUrl };
+    }
+
+    function extractPostText(value) {
+      if (!value) return "";
+      if (typeof value === "string") return value;
+      if (Array.isArray(value)) return value.map(extractPostText).join("");
+      if (value.textData && value.textData.text) return value.textData.text;
+      if (value.nodes) return extractPostText(value.nodes);
+      return "";
+    }
+
+    async function readApiResponse(res) {
+      const body = await res.text();
+      try {
+        return body ? JSON.parse(body) : {};
+      } catch {
+        throw new Error(`Server returned an unexpected response (${res.status}). Please refresh and try again.`);
+      }
+    }
+
+    async function loadEditPost() {
+      if (!editId) return;
+
+      document.getElementById("page-title").textContent = editIsDraft ? "Edit Shopify Draft" : "Edit Published Shopify Post";
+      document.getElementById("create-actions").style.display = "none";
+      document.getElementById("edit-actions").style.display = "flex";
+      document.getElementById("scheduledFor").closest("div").parentElement.style.display = "none";
+      document.getElementById("result").innerHTML = `<span class="hint">Loading post from Shopify...</span>`;
+
+      try {
+        const res = await apiFetch(`/shopify/posts/${encodeURIComponent(editId)}?isDraft=${editIsDraft}`);
+        const post = await readApiResponse(res);
+        if (!res.ok) throw new Error(post.error || "Failed to load post.");
+
+        document.getElementById("title").value = post.title || "";
+        document.getElementById("content").value = post.body_html || post.content || "";
+        document.getElementById("result").textContent = "";
+      } catch (err) {
+        document.getElementById("result").innerHTML = `<span class="text-error">${err.message}</span>`;
+      }
+    }
+
+    async function saveShopifyEdit() {
+      const data = getFormData();
+      if (!data) return;
+
+      const result = document.getElementById("result");
+      result.innerHTML = `<span class="hint">Saving changes to Shopify...</span>`;
+      try {
+        const res = await apiFetch(`/shopify/posts/${encodeURIComponent(editId)}?isDraft=${editIsDraft}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const response = await readApiResponse(res);
+        if (!res.ok) throw new Error(response.error || "Failed to save changes.");
+
+        result.innerHTML = `<span class="text-success">${editIsDraft ? "Draft" : "Published post"} updated successfully.</span>`;
+      } catch (err) {
+        result.innerHTML = `<span class="text-error">${err.message}</span>`;
+      }
+    }
+
+    async function publishToShopifyNow() {
+      const data = getFormData();
+      if (!data) return;
+
+      const result = document.getElementById("result");
+      result.innerHTML = `<span class="hint">Publishing post to your Shopify blog...</span>`;
+
+      try {
+        // 1. Create the blog record
+        const createRes = await apiFetch("/blogs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        const created = await readApiResponse(createRes);
+        if (!createRes.ok) throw new Error(created.error || "Failed to create post.");
+
+        // 2. Publish it to the connected Shopify store
+        const pubRes = await apiFetch(`/blogs/${encodeURIComponent(created.id)}/publish`, { method: "POST" });
+        const resData = await readApiResponse(pubRes);
+        if (!pubRes.ok) throw new Error(`${resData.error || "Publish failed."} ${resData.details || ""}`);
+
+        result.innerHTML = `
+          <div style="background:#dff4eb; padding:14px; border-radius:6px; border:1px solid #bce6d5;">
+            <strong class="text-success">🎉 Post published live on Shopify!</strong>
+            <p style="margin:6px 0 0; font-size:13px;">Shopify Article ID: <code>${esc(resData.shopifyArticleId || created.id)}</code></p>
+            ${safeUrl(resData.url) ? `<a href="${esc(resData.url)}" target="_blank" rel="noopener" class="btn btn-sm" style="margin-top:8px;">View on your store ↗</a>` : `<a href="shopify-posts.html" class="btn btn-sm" style="margin-top:8px;">View in Shopify Blog Manager ↗</a>`}
+          </div>
+        `;
+      } catch (err) {
+        result.innerHTML = `<div class="text-error">Error publishing to Shopify: ${esc(err.message)}</div>`;
+      }
+    }
+
+    async function saveLocalDraft() {
+      const data = getFormData();
+      if (!data) return;
+
+      const res = await apiFetch("/blogs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const resData = await res.json();
+      if (res.ok) {
+        document.getElementById("result").innerHTML = `<span class="text-success">Saved as local draft. View in History & Queue.</span>`;
+      } else {
+        document.getElementById("result").innerHTML = `<span class="text-error">${resData.error}</span>`;
+      }
+    }
+
+    async function schedulePost() {
+      const scheduledFor = document.getElementById("scheduledFor").value;
+      if (!scheduledFor) {
+        alert("Please pick a scheduled date and time.");
+        return;
+      }
+      const data = getFormData();
+      if (!data) return;
+
+      // 1. Save local draft
+      const saveRes = await apiFetch("/blogs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const saved = await saveRes.json();
+      if (!saveRes.ok) return alert(saved.error);
+
+      // 2. Schedule it
+      const schedRes = await apiFetch(`/blogs/${saved.id}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledFor }),
+      });
+      const schedData = await schedRes.json();
+      if (schedRes.ok) {
+        document.getElementById("result").innerHTML = `
+          <div style="background:#fdf3d8; padding:14px; border-radius:6px; border:1px solid #f6e2a8;">
+            <strong>⏰ Scheduled for ${scheduledFor}!</strong>
+            <p class="hint" style="margin:4px 0 0;">The background scheduler will automatically publish this to the client's Shopify store at the scheduled time.</p>
+          </div>
+        `;
+      } else {
+        document.getElementById("result").innerHTML = `<span class="text-error">${schedData.error}</span>`;
+      }
+    }
+
+    checkAuth();
+    loadEditPost();
+  </script>
+  </body>
+</html>

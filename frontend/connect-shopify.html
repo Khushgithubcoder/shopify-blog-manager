@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Connect Shopify Store</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a class="active" href="connect-shopify.html">Connect Shopify</a>
+    <a href="shopify-posts.html">Shopify Blog Manager</a>
+    <a href="create-blog.html">Create Post</a>
+    <a href="import-sheets.html">Import Sheets</a>
+    <a href="history.html">History & Queue</a>
+    <button class="logout" type="button" onclick="logout()">Log out</button>
+  </nav>
+
+  <p class="eyebrow">Zero-Credential Integration</p>
+  <h1>Connect Your Shopify Store</h1>
+  <p class="lede">Connect your Shopify store securely without ever sharing your Shopify email, password, API keys or access tokens. You approve access on Shopify, and it can be revoked from your Shopify admin at any time.</p>
+
+  <!-- Connection Card -->
+  <div class="card">
+    <div id="connected-view" style="display:none;"></div>
+
+    <div id="connect-form">
+      <label for="shopDomain">Shopify Store Address</label>
+      <input id="shopDomain" placeholder="your-store.myshopify.com" autocomplete="off" onkeydown="if(event.key==='Enter')connectShopify()" />
+      <p class="hint" style="margin:-8px 0 16px;">Just the store address (not a password or key). You'll be sent to Shopify to authorize the app.</p>
+
+      <button id="connect-btn" onclick="connectShopify()">Connect Shopify Store</button>
+    </div>
+
+    <div id="result" style="margin-top:16px;"></div>
+  </div>
+
+  <script>
+    async function checkAuth() {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) window.location.href = "login.html";
+    }
+
+    // Accepts "store", "store.myshopify.com" or a pasted admin/store URL.
+    function normalizeShop(input) {
+      let v = input.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+      if (v.startsWith("admin.shopify.com")) return "";
+      if (v && !v.includes(".")) v += ".myshopify.com";
+      return /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(v) ? v : "";
+    }
+
+    function connectShopify() {
+      const result = document.getElementById("result");
+      const shop = normalizeShop(document.getElementById("shopDomain").value);
+      if (!shop) {
+        result.innerHTML = `<span class="text-error">Enter your store address, e.g. your-store.myshopify.com</span>`;
+        return;
+      }
+      const btn = document.getElementById("connect-btn");
+      btn.disabled = true;
+      btn.textContent = "Redirecting to Shopify...";
+      // Backend starts Shopify OAuth (302 -> Shopify), then Shopify -> /shopify/callback -> back here.
+      window.location.href = apiUrl("/shopify/connect?shop=" + encodeURIComponent(shop));
+    }
+
+    async function loadStatus() {
+      const params = new URLSearchParams(window.location.search);
+      const result = document.getElementById("result");
+      if (params.get("error")) {
+        result.innerHTML = `<div class="text-error" style="background:#fff0eb; padding:14px; border-radius:6px; border:1px solid #f9d3ca;">❌ ${esc(params.get("error"))}</div>`;
+      }
+      try {
+        const res = await apiFetch("/shopify/status");
+        const data = await res.json();
+        if (!data.connected) return;
+        document.getElementById("connect-form").style.display = "none";
+        document.getElementById("connected-view").style.display = "block";
+        document.getElementById("connected-view").innerHTML = `
+          <div style="background:#dff4eb; padding:16px; border-radius:8px; border:1px solid #bce6d5;">
+            <strong class="text-success">✅ Store Connected!</strong>
+            <p style="margin:8px 0 0; font-size:14px;">Connected to: <strong>${esc(data.shopName || data.shop)}</strong> (${esc(data.shop)})</p>
+          </div>
+          <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+            <a href="dashboard.html" class="btn">Go to Dashboard</a>
+            <a href="create-blog.html" class="btn btn-secondary">+ Create Post</a>
+          </div>`;
+      } catch (err) {
+        result.innerHTML = `<div class="text-error">Network error: ${esc(err.message)}</div>`;
+      }
+    }
+
+    checkAuth();
+    loadStatus();
+  </script>
+</body>
+</html>

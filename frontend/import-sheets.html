@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Import from Google Sheets</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="connect-shopify.html">Connect Shopify</a>
+    <a href="shopify-posts.html">Shopify Blog Manager</a>
+    <a href="create-blog.html">Create Post</a>
+    <a class="active" href="import-sheets.html">Import Sheets</a>
+    <a href="history.html">History & Queue</a>
+    <button class="logout" type="button" onclick="logout()">Log out</button>
+  </nav>
+
+  <p class="eyebrow">Batch Publishing</p>
+  <h1>Import from Google Sheets</h1>
+  <p class="lede">Import batches of articles, ideas, and drafts from a published Google Sheet CSV directly into the queue.</p>
+
+  <div class="card">
+    <div class="steps-container">
+      <div class="step-row">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <strong>Prepare your Google Sheet:</strong><br />
+          Ensure header row has: <code>title</code>, <code>content</code>, and optionally <code>image</code> or <code>image_url</code>.
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <strong>Publish as CSV:</strong><br />
+          In Google Sheets: <em>File → Share → Publish to web → Comma-separated values (.csv)</em>.
+        </div>
+      </div>
+    </div>
+
+    <label for="csvUrl">Published CSV Link</label>
+    <input id="csvUrl" placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv" />
+
+    <button onclick="importSheet()">Import Articles as Drafts</button>
+    <div id="result" style="margin-top:16px;"></div>
+  </div>
+
+  <script>
+    async function checkAuth() {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) window.location.href = "login.html";
+    }
+
+    async function importSheet() {
+      const csvUrl = document.getElementById("csvUrl").value.trim();
+      if (!csvUrl) {
+        alert("Please enter a published Google Sheets CSV URL.");
+        return;
+      }
+
+      const result = document.getElementById("result");
+      result.innerHTML = `<span class="hint">Fetching and processing CSV sheet...</span>`;
+
+      try {
+        const res = await apiFetch("/sheets/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ csvUrl }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          result.innerHTML = `
+            <div style="background:#dff4eb; padding:14px; border-radius:6px; border:1px solid #bce6d5;">
+              <strong class="text-success">🎉 Successfully imported ${data.imported} article(s)!</strong>
+              <p style="margin:6px 0 0; font-size:13px;">View and schedule them from the History & Queue page.</p>
+              <a href="history.html" class="btn btn-sm" style="margin-top:8px;">View Queue ↗</a>
+            </div>
+          `;
+        } else {
+          result.innerHTML = `<div class="text-error">Import error: ${data.error}</div>`;
+        }
+      } catch (err) {
+        result.innerHTML = `<div class="text-error">Network error: ${err.message}</div>`;
+      }
+    }
+
+    checkAuth();
+  </script>
+  </body>
+</html>

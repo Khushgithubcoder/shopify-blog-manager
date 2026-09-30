@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Login</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="login-page">
+  <p class="eyebrow">Shopify blog automation</p>
+  <h1>Login</h1>
+  <p class="lede">A focused workspace for turning your content into published Shopify posts.</p>
+  <div class="card">
+    <label for="email">Email</label>
+    <input id="email" type="email" placeholder="you@example.com" />
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Your password" />
+    <button onclick="login()">Login</button>
+    <button onclick="signup()">Sign up instead</button>
+    <p id="msg" class="error"></p>
+  </div>
+
+  <script>
+    async function submitAuth(path) {
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      const res = await apiFetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        document.getElementById("msg").textContent = data.error;
+        return;
+      }
+      window.location.href = "dashboard.html";
+    }
+    function login() { submitAuth("/auth/login"); }
+    function signup() { submitAuth("/auth/signup"); }
+  </script>
+</body>
+</html>

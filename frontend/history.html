@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Content History & Automation Queue</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="connect-shopify.html">Connect Shopify</a>
+    <a href="shopify-posts.html">Shopify Blog Manager</a>
+    <a href="create-blog.html">Create Post</a>
+    <a href="import-sheets.html">Import Sheets</a>
+    <a class="active" href="history.html">History & Queue</a>
+    <button class="logout" type="button" onclick="logout()">Log out</button>
+  </nav>
+
+  <p class="eyebrow">Audit & Automation</p>
+  <h1>Content History & Queue</h1>
+  <p class="lede">Track local drafts, automated scheduling queues, and audit logs of all actions performed on the client's Shopify store.</p>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-queue" onclick="switchSection('queue')">Local Drafts & Queue</button>
+    <button class="tab" id="tab-logs" onclick="switchSection('logs')">Activity Audit Log</button>
+  </div>
+
+  <div id="queue-section">
+    <div id="list" class="post-list">Loading queue...</div>
+  </div>
+
+  <div id="logs-section" style="display:none;">
+    <div id="logs-list" class="card">Loading activity logs...</div>
+  </div>
+
+  <script>
+    async function checkAuth() {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) window.location.href = "login.html";
+    }
+
+    function switchSection(sec) {
+      document.getElementById('tab-queue').className = sec === 'queue' ? 'tab active' : 'tab';
+      document.getElementById('tab-logs').className = sec === 'logs' ? 'tab active' : 'tab';
+      document.getElementById('queue-section').style.display = sec === 'queue' ? 'block' : 'none';
+      document.getElementById('logs-section').style.display = sec === 'logs' ? 'block' : 'none';
+      if (sec === 'logs') loadAuditLogs();
+    }
+
+    async function loadBlogs() {
+      const res = await apiFetch("/blogs");
+      if (!res.ok) return (window.location.href = "login.html");
+      const blogs = await res.json();
+      const list = document.getElementById("list");
+
+      if (blogs.length === 0) {
+        list.innerHTML = `<div class="card hint" style="text-align:center;">No local drafts or scheduled posts in the queue. <a href="create-blog.html">Create a post</a> or import from Google Sheets.</div>`;
+        return;
+      }
+
+      list.innerHTML = blogs.map((b) => {
+        let badgeClass = 'badge-neutral';
+        if (b.status === 'published') badgeClass = 'badge-success';
+        if (b.status === 'scheduled') badgeClass = 'badge-warning';
+        if (b.status === 'failed') badgeClass = 'badge-error';
+
+        return `
+          <div class="post-row">
+            ${b.image_url ? `<img src="${b.image_url}" class="post-cover" />` : `<div class="post-cover" style="display:flex;align-items:center;justify-content:center;color:#999;font-size:12px;">No cover</div>`}
+            <div class="post-main">
+              <h3 class="post-title">${escapeHtml(b.title)}</h3>
+              <div class="post-meta">
+                <span class="badge ${badgeClass}">${b.status.toUpperCase()}</span>
+                ${b.scheduled_for ? `<span>Scheduled: ${b.scheduled_for}</span>` : ''}
+                ${b.shopify_article_id ? `<span>Shopify ID: <code>${b.shopify_article_id}</code></span>` : ''}
+              </div>
+            </div>
+            <div class="post-actions">
+              ${b.status !== 'published' ? `<button class="btn btn-sm" onclick="publishNow('${b.id}')">Publish Now</button>` : ''}
+              <button class="btn btn-danger btn-sm" onclick="deleteLocal('${b.id}')">Delete</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function publishNow(id) {
+      const res = await apiFetch(`/blogs/${id}/publish`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`${data.error} ${data.details || ""}`);
+      } else {
+        alert("Published successfully to Shopify!");
+      }
+      loadBlogs();
+    }
+
+    async function deleteLocal(id) {
+      if (!confirm("Delete this draft from the local queue?")) return;
+      await apiFetch(`/blogs/${id}`, { method: "DELETE" });
+      loadBlogs();
+    }
+
+    async function loadAuditLogs() {
+      const container = document.getElementById("logs-list");
+      try {
+        const res = await apiFetch("/audit-logs");
+        const logs = await res.json();
+        if (logs.length === 0) {
+          container.innerHTML = `<span class="hint">No activity logged yet.</span>`;
+          return;
+        }
+
+        container.innerHTML = logs.map(l => `
+          <div style="padding:10px 0; border-bottom:1px solid #eef2ef; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <strong>${escapeHtml(l.action)}</strong>
+              <div class="hint">${JSON.stringify(l.details || {})}</div>
+            </div>
+            <div class="hint" style="font-size:12px;">${new Date(l.created_at).toLocaleString()}</div>
+          </div>
+        `).join('');
+      } catch (e) {
+        container.innerHTML = `<span class="text-error">Failed to load logs: ${e.message}</span>`;
+      }
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    checkAuth();
+    loadBlogs();
+  </script>
+  </body>
+</html>

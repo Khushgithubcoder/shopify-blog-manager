@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard — Shopify Management Platform</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="dashboard-page">
+  <nav>
+    <a class="active" href="dashboard.html">Dashboard</a>
+    <a href="connect-shopify.html">Connect Shopify</a>
+    <a href="shopify-posts.html">Shopify Blog Manager</a>
+    <a href="create-blog.html">Create Post</a>
+    <a href="import-sheets.html">Import Sheets</a>
+    <a href="history.html">History & Queue</a>
+    <button class="logout" type="button" onclick="logout()">Log out</button>
+  </nav>
+
+  <p class="eyebrow">Workspace Overview</p>
+  <h1>Client Website Dashboard</h1>
+  <p class="lede">Manage the connected Shopify store and publish content without sharing passwords.</p>
+
+  <!-- Site Connection Overview Card -->
+  <div class="card" id="connection-card">
+    <div class="card-header">
+      <h2 style="margin:0;">Shopify Store Connection</h2>
+      <span id="conn-badge" class="badge badge-neutral">Checking status...</span>
+    </div>
+    <div id="conn-details">Loading connection information...</div>
+  </div>
+
+  <!-- Quick Stats -->
+  <div class="stats-grid" id="stats-area" style="display:none;">
+    <div class="stat-card">
+      <div class="stat-num" id="stat-published">-</div>
+      <div class="stat-label">Live Shopify Posts</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="stat-drafts">-</div>
+      <div class="stat-label">Shopify Drafts</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="stat-local-queue">-</div>
+      <div class="stat-label">Scheduled / In Queue</div>
+    </div>
+  </div>
+
+  <script>
+    async function checkAuth() {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) {
+        window.location.href = "login.html";
+        return false;
+      }
+      return true;
+    }
+
+    async function loadDashboard() {
+      try {
+        const res = await apiFetch("/shopify/status");
+        const data = await res.json();
+        const badge = document.getElementById("conn-badge");
+        const details = document.getElementById("conn-details");
+        const statsArea = document.getElementById("stats-area");
+
+        if (!data.connected) {
+          badge.className = "badge badge-warning";
+          badge.textContent = "NOT CONNECTED";
+          details.innerHTML = `
+            <p>No Shopify store is currently connected to this account.</p>
+            <p class="hint">Clients link their store in one click by authorizing our app on Shopify. No keys or passwords are shared.</p>
+            <a href="connect-shopify.html" class="btn">Connect Shopify Store Now</a>
+          `;
+          statsArea.style.display = "none";
+          return;
+        }
+
+        badge.className = "badge badge-success";
+        badge.textContent = "CONNECTED & VERIFIED";
+
+        details.innerHTML = `
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; margin: 12px 0 16px;">
+            <div><strong>Store Name:</strong> ${esc(data.shopName || 'Shopify Store')}</div>
+            <div><strong>Store Domain:</strong> <code>${esc(data.shop)}</code></div>
+            <div><strong>Access:</strong> SHOPIFY OAUTH</div>
+            <div><strong>Live Store:</strong> ${safeUrl(data.storeUrl) ? `<a href="${esc(data.storeUrl)}" target="_blank" rel="noopener">${esc(data.storeUrl)} ↗</a>` : 'URL unavailable'}</div>
+          </div>
+          <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+            <a href="shopify-posts.html" class="btn">Manage Blog Posts ↗</a>
+            <a href="create-blog.html" class="btn btn-secondary">+ Create Post</a>
+            <button class="btn btn-danger btn-sm" onclick="disconnectShopify()">Disconnect Store</button>
+          </div>
+        `;
+
+        statsArea.style.display = "grid";
+
+        // Fetch counts
+        loadCounts();
+      } catch (err) {
+        document.getElementById("conn-details").innerHTML = `<span class="text-error">Error connecting to backend database: ${esc(err.message)}</span>`;
+      }
+    }
+
+    async function loadCounts() {
+      try {
+        const postsRes = await apiFetch("/shopify/posts");
+        if (postsRes.ok) {
+          const postsData = await postsRes.json();
+          document.getElementById("stat-published").textContent = postsData.totalPublished || 0;
+          document.getElementById("stat-drafts").textContent = postsData.totalDrafts || 0;
+        }
+
+        const localRes = await apiFetch("/blogs");
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          const scheduled = localData.filter(b => b.status === 'scheduled').length;
+          document.getElementById("stat-local-queue").textContent = scheduled;
+        }
+      } catch (e) {
+        console.error("Count load error:", e);
+      }
+    }
+
+    async function disconnectShopify() {
+      if (!confirm("Are you sure you want to disconnect this Shopify store? The stored access token will be purged from our database.")) return;
+      const res = await apiFetch("/shopify/disconnect", { method: 'POST' });
+      if (res.ok) {
+        alert("Shopify store disconnected.");
+        loadDashboard();
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      if (await checkAuth()) await loadDashboard();
+    }, { once: true });
+  </script>
+  </body>
+</html>

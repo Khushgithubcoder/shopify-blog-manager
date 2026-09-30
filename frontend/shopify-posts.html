@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Manage Shopify Posts & Content</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <nav>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="connect-shopify.html">Connect Shopify</a>
+    <a class="active" href="shopify-posts.html">Shopify Blog Manager</a>
+    <a href="create-blog.html">Create Post</a>
+    <a href="import-sheets.html">Import Sheets</a>
+    <a href="history.html">History & Queue</a>
+    <button class="logout" type="button" onclick="logout()">Log out</button>
+  </nav>
+
+  <p class="eyebrow">Content Control</p>
+  <h1>Shopify Blog Manager</h1>
+  <p class="lede">Manage live published blog posts and drafts directly on the client's connected Shopify store without needing their login credentials.</p>
+
+  <div id="connection-banner" class="card" style="display:none;"></div>
+
+  <div class="card" id="main-content">
+    <div class="card-header">
+      <div class="tabs" style="margin-bottom:0; border-bottom:0;">
+        <button class="tab active" id="tab-published" onclick="switchTab('published')">Published Posts (<span id="pub-count">0</span>)</button>
+        <button class="tab" id="tab-drafts" onclick="switchTab('drafts')">Shopify Drafts (<span id="draft-count">0</span>)</button>
+      </div>
+      <div>
+        <a href="create-blog.html" class="btn btn-sm">+ New Post</a>
+        <button class="btn btn-secondary btn-sm" onclick="loadPosts()">↻ Refresh from Shopify</button>
+      </div>
+    </div>
+
+    <div id="loading" class="hint">Loading posts from Shopify store...</div>
+    <div id="posts-container" class="post-list" style="display:none;"></div>
+    <div id="empty-state" class="hint" style="display:none; padding:20px; text-align:center;">No posts found in this section.</div>
+  </div>
+
+  <script>
+    let activeTab = 'published';
+    let publishedPosts = [];
+    let draftPosts = [];
+    let siteUrl = '';
+
+    async function checkAuth() {
+      const res = await apiFetch("/auth/me");
+      if (!res.ok) window.location.href = "login.html";
+    }
+
+    async function loadPosts() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('posts-container').style.display = 'none';
+      document.getElementById('empty-state').style.display = 'none';
+
+      // Check Shopify status first
+      const statusRes = await apiFetch("/shopify/status");
+      const statusData = await statusRes.json();
+      
+      if (!statusData.connected) {
+        document.getElementById('loading').style.display = 'none';
+        const banner = document.getElementById('connection-banner');
+        banner.style.display = 'block';
+        banner.innerHTML = `
+          <strong>No Shopify store connected.</strong> 
+          <p class="hint">Please connect your Shopify store before managing blog posts.</p>
+          <a href="connect-shopify.html" class="btn btn-sm">Connect Shopify Store</a>
+        `;
+        document.getElementById('main-content').style.display = 'none';
+        return;
+      }
+
+      siteUrl = statusData.storeUrl || '';
+
+      try {
+        const res = await apiFetch("/shopify/posts");
+        const data = await res.json();
+        
+        if (!res.ok) {
+          document.getElementById('loading').innerHTML = `<span class="text-error">${data.error || 'Failed to fetch posts from Shopify.'}</span>`;
+          return;
+        }
+
+        publishedPosts = data.published || [];
+        draftPosts = data.drafts || [];
+
+        document.getElementById('pub-count').textContent = publishedPosts.length;
+        document.getElementById('draft-count').textContent = draftPosts.length;
+
+        document.getElementById('loading').style.display = 'none';
+        renderPosts();
+      } catch (err) {
+        document.getElementById('loading').innerHTML = `<span class="text-error">Network error: ${err.message}</span>`;
+      }
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      document.getElementById('tab-published').className = tab === 'published' ? 'tab active' : 'tab';
+      document.getElementById('tab-drafts').className = tab === 'drafts' ? 'tab active' : 'tab';
+      renderPosts();
+    }
+
+    function renderPosts() {
+      const container = document.getElementById('posts-container');
+      const emptyState = document.getElementById('empty-state');
+      const list = activeTab === 'published' ? publishedPosts : draftPosts;
+
+      if (list.length === 0) {
+        container.style.display = 'none';
+        emptyState.style.display = 'block';
+        return;
+      }
+
+      emptyState.style.display = 'none';
+      container.style.display = 'flex';
+
+      container.innerHTML = list.map(item => {
+        const isDraft = activeTab === 'drafts';
+        const dateStr = isDraft 
+          ? (item.lastModified ? `Updated: ${new Date(item.lastModified).toLocaleDateString()}` : 'Draft')
+          : (item.publishedDate ? `Published: ${new Date(item.publishedDate).toLocaleDateString()}` : 'Live');
+        
+        const previewUrl = safeUrl(item.url) || null; // backend returns the public article URL
+
+        return `
+          <div class="post-row">
+            <div class="post-main">
+              <h3 class="post-title">${escapeHtml(item.title || 'Untitled Post')}</h3>
+              <div class="post-meta">
+                <span class="badge ${isDraft ? 'badge-warning' : 'badge-success'}">${isDraft ? 'DRAFT' : 'PUBLISHED'}</span>
+                <span>${dateStr}</span>
+                ${item.metrics && item.metrics.views ? `<span>👁 ${item.metrics.views} views</span>` : ''}
+                ${item.id ? `<span class="hint">ID: ${item.id}</span>` : ''}
+              </div>
+            </div>
+            <div class="post-actions">
+              ${previewUrl ? `<a href="${previewUrl}" target="_blank" class="btn btn-secondary btn-sm">Preview ↗</a>` : ''}
+              <a href="create-blog.html?editId=${encodeURIComponent(item.id)}&isDraft=${isDraft}" class="btn btn-secondary btn-sm">Edit</a>
+              ${isDraft ? `<button class="btn btn-sm" onclick="publishDraft('${item.id}')">Publish Now</button>` : ''}
+              <button class="btn btn-danger btn-sm" onclick="deletePost('${item.id}', ${isDraft})">Delete</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function publishDraft(draftId) {
+      if (!confirm("Are you sure you want to publish this draft directly to the client's Shopify store?")) return;
+      const res = await apiFetch(`/shopify/drafts/${draftId}/publish`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert("Draft successfully published to Shopify!");
+        loadPosts();
+      } else {
+        alert(data.error || "Failed to publish draft.");
+      }
+    }
+
+    async function deletePost(postId, isDraft) {
+      const type = isDraft ? 'draft' : 'published post';
+      if (!confirm(`Are you sure you want to delete this ${type} from the client's Shopify store? This cannot be undone.`)) return;
+
+      const res = await apiFetch(`/shopify/posts/${postId}?isDraft=${isDraft}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        alert("Post deleted successfully from Shopify.");
+        loadPosts();
+      } else {
+        alert(data.error || "Failed to delete post from Shopify.");
+      }
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    checkAuth();
+    loadPosts();
+  </script>
+  </body>
+</html>
