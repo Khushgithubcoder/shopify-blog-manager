@@ -4,7 +4,8 @@ import hmac
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from html.parser import HTMLParser
+from urllib.parse import urlencode, urlparse
 
 import requests
 
@@ -144,12 +145,114 @@ def article_gid(numeric_id: str) -> str:
     return f"gid://shopify/Article/{numeric_id}"
 
 
+SAFE_HTML_TAGS = {
+    "p", "br", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li",
+    "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "a", "img",
+    "div", "span", "table", "thead", "tbody", "tr", "td", "th", "code",
+    "pre", "hr"
+}
+FORBIDDEN_HTML_TAGS = {"script", "style", "iframe", "object", "embed", "svg", "math", "link", "meta", "base"}
+
+
+class _SafeHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.parts = []
+        self._blocked_depth = 0
+
+    def _safe_attrs(self, tag: str, attrs):
+        result = []
+        for name, value in attrs or []:
+            if not name:
+                continue
+            attr = name.lower()
+            if attr.startswith("on"):
+                continue
+            if tag == "a" and attr in {"href", "title", "target", "rel"}:
+                if attr == "href":
+                    href = (value or "").strip()
+                    if not href:
+                        continue
+                    parsed = urlparse(href)
+                    if parsed.scheme and parsed.scheme.lower() not in {"http", "https", "mailto"}:
+                        continue
+                    result.append((name, href))
+                    continue
+                if value is not None:
+                    result.append((name, value))
+            elif tag == "img" and attr in {"src", "alt", "title"}:
+                if attr == "src":
+                    src = (value or "").strip()
+                    if not src:
+                        continue
+                    parsed = urlparse(src)
+                    if parsed.scheme and parsed.scheme.lower() not in {"http", "https"}:
+                        continue
+                    result.append((name, src))
+                    continue
+                if value is not None:
+                    result.append((name, value))
+        return result
+
+    def _emit_attrs(self, attrs):
+        if not attrs:
+            return ""
+        chunks = []
+        for name, value in attrs:
+            escaped = value.replace('"', '&quot;') if value is not None else ""
+            chunks.append(f' {name}="{escaped}"')
+        return "".join(chunks)
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in FORBIDDEN_HTML_TAGS:
+            self._blocked_depth += 1
+            return
+        if self._blocked_depth > 0 or tag not in SAFE_HTML_TAGS:
+            return
+        safe_attrs = self._safe_attrs(tag, attrs)
+        self.parts.append(f"<{tag}{self._emit_attrs(safe_attrs)}>")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if self._blocked_depth > 0:
+            if tag in FORBIDDEN_HTML_TAGS:
+                self._blocked_depth = max(0, self._blocked_depth - 1)
+            return
+        if tag in SAFE_HTML_TAGS:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if data and self._blocked_depth == 0:
+            self.parts.append(data)
+
+    def handle_entityref(self, name):
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name):
+        self.parts.append(f"&#{name};")
+
+
+def sanitize_html(content: str) -> str:
+    """Allow a small, safe subset of rich text and strip script/event-handler payloads."""
+    if not content:
+        return ""
+    parser = _SafeHTMLParser()
+    parser.feed(content)
+    parser.close()
+    return "".join(parser.parts)
+
+
 def text_to_html(content: str) -> str:
-    """Editor gives plain text; Shopify wants HTML. Real HTML is passed through untouched."""
-    if re.search(r"</?(p|h[1-6]|ul|ol|li|div|br|img|a|blockquote|strong|em|table)\b", content, re.I):
-        return content
+    """Convert plain text to safe HTML and preserve a known-good rich-text subset."""
+    clean = sanitize_html(content or "")
+    if re.search(r"</?(p|h[1-6]|ul|ol|li|div|br|img|a|blockquote|strong|em|table|thead|tbody|tr|td|th|code|pre)\b", clean, re.I):
+        return clean
     from html import escape
-    paras = [p.strip() for p in re.split(r"\n\s*\n", content.strip()) if p.strip()]
+    paras = [p.strip() for p in re.split(r"\n\s*\n", clean.strip()) if p.strip()]
     return "".join(f"<p>{escape(p).replace(chr(10), '<br>')}</p>" for p in paras)
 
 

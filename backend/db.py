@@ -149,16 +149,26 @@ def get_blogs_for_user(user_id):
     return _all("SELECT * FROM blogs WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
 
 
-def update_blog_status(blog_id, status, shopify_article_id=None, scheduled_for=None):
+def update_blog_status(blog_id, status, shopify_article_id=None, scheduled_for=None, clear_scheduled=False):
+    if scheduled_for is None and not clear_scheduled:
+        scheduled_for_sql = "scheduled_for = scheduled_for"
+        params = (status, shopify_article_id, blog_id)
+    elif clear_scheduled:
+        scheduled_for_sql = "scheduled_for = NULL"
+        params = (status, shopify_article_id, blog_id)
+    else:
+        scheduled_for_sql = "scheduled_for = %s"
+        params = (status, shopify_article_id, scheduled_for, blog_id)
+
     _run(
-        """
+        f"""
         UPDATE blogs SET status = %s,
           shopify_article_id = COALESCE(%s, shopify_article_id),
-          scheduled_for = COALESCE(%s, scheduled_for),
+          {scheduled_for_sql},
           updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
         """,
-        (status, shopify_article_id, scheduled_for, blog_id),
+        params,
     )
 
 
@@ -167,7 +177,7 @@ def delete_blog(blog_id):
 
 
 def get_due_scheduled_blogs():
-    return _all("SELECT * FROM blogs WHERE status = 'scheduled' AND scheduled_for <= CURRENT_TIMESTAMP")
+    return _all("SELECT * FROM blogs WHERE status = 'scheduled' AND scheduled_for <= CURRENT_TIMESTAMP ORDER BY scheduled_for ASC")
 
 
 def claim_blog(blog_id):

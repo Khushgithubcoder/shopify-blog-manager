@@ -203,11 +203,12 @@
     }
 
     async function schedulePost() {
-      const scheduledFor = document.getElementById("scheduledFor").value;
-      if (!scheduledFor) {
+      const localScheduledFor = document.getElementById("scheduledFor").value;
+      if (!localScheduledFor) {
         alert("Please pick a scheduled date and time.");
         return;
       }
+      const scheduledFor = new Date(localScheduledFor).toISOString();
       const data = getFormData();
       if (!data) return;
 
@@ -228,9 +229,10 @@
       });
       const schedData = await schedRes.json();
       if (schedRes.ok) {
+        const displayTime = new Date(localScheduledFor).toLocaleString();
         document.getElementById("result").innerHTML = `
           <div style="background:#fdf3d8; padding:14px; border-radius:6px; border:1px solid #f6e2a8;">
-            <strong>⏰ Scheduled for ${scheduledFor}!</strong>
+            <strong>⏰ Scheduled for ${displayTime}!</strong>
             <p class="hint" style="margin:4px 0 0;">The background scheduler will automatically publish this to the client's Shopify store at the scheduled time.</p>
           </div>
         `;

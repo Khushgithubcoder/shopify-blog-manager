@@ -37,6 +37,13 @@ def frontend(path: str) -> str:
     return f"{FRONTEND_URL}/{path}"
 
 
+def get_session_secret() -> str:
+    secret = os.environ.get("SESSION_SECRET", "").strip()
+    if not secret or secret == "dev-secret-change-me":
+        raise RuntimeError("SESSION_SECRET must be set to a non-default secret before starting the app.")
+    return secret
+
+
 # --- App / scheduler ---------------------------------------------------------
 
 def scheduler_loop():
@@ -71,7 +78,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Shopify Blog Automation", lifespan=lifespan)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.environ.get("SESSION_SECRET", "dev-secret-change-me"),
+    secret_key=get_session_secret(),
     same_site="lax",
     https_only=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
     max_age=60 * 60 * 24 * 14,
@@ -148,13 +155,16 @@ def shopify_call(user_id: str, fn, *args, **kwargs):
 def publish_blog_row(blog: dict) -> dict:
     """Publish a stored blog to the owner's store. Used by the endpoint and the scheduler."""
     uid = blog["user_id"]
+    if blog.get("status") == "published" and blog.get("shopify_article_id"):
+        return {"shopifyArticleId": blog["shopify_article_id"], "url": None}
+
     cred = db.get_credential(uid)
     if not cred:
         raise HTTPException(400, "No Shopify store connected. Connect one first.")
     shop, token = get_valid_token(uid)
     article = sh.create_article(shop, token, cred["store_url"], blog["title"], blog["content"],
                                 blog["image_url"], author=cred["shop_name"], publish=True)
-    db.update_blog_status(blog["id"], "published", shopify_article_id=article["id"])
+    db.update_blog_status(blog["id"], "published", shopify_article_id=article["id"], clear_scheduled=True)
     return {"shopifyArticleId": article["id"], "url": article["url"]}
 
 
@@ -319,6 +329,18 @@ class ScheduleIn(BaseModel):
     scheduledFor: str
 
 
+def parse_datetime_local(value: str) -> datetime:
+    if not value:
+        raise HTTPException(400, "A scheduled time is required.")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(400, "Use a valid ISO timestamp for the scheduled time.") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _own_blog(blog_id: str, uid: str) -> dict:
     blog = db.get_blog(blog_id)
     if not blog or blog["user_id"] != uid:
@@ -357,9 +379,12 @@ def publish_blog(blog_id: str, uid: str = Depends(current_user_id)):
 @app.post("/blogs/{blog_id}/schedule")
 def schedule_blog(blog_id: str, body: ScheduleIn, uid: str = Depends(current_user_id)):
     _own_blog(blog_id, uid)
-    db.update_blog_status(blog_id, "scheduled", scheduled_for=body.scheduledFor)
-    db.record_audit_log(uid, "SCHEDULED_BLOG", {"blogId": blog_id, "scheduledFor": body.scheduledFor})
-    return db.get_blog(blog_id)
+    scheduled_for = parse_datetime_local(body.scheduledFor)
+    db.update_blog_status(blog_id, "scheduled", scheduled_for=scheduled_for)
+    db.record_audit_log(uid, "SCHEDULED_BLOG", {"blogId": blog_id, "scheduledFor": scheduled_for.isoformat()})
+    blog = db.get_blog(blog_id)
+    blog["scheduled_for"] = scheduled_for
+    return blog
 
 
 @app.delete("/blogs/{blog_id}")

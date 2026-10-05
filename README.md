@@ -29,7 +29,7 @@ python3 -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\ac
 pip install -r requirements.txt
 cp .env.example .env                                   # Windows: copy .env.example .env
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"   # -> paste as ENCRYPTION_KEY
-# edit .env: SHOPIFY_API_KEY, SHOPIFY_API_SECRET, DATABASE_URL, SESSION_SECRET, ENCRYPTION_KEY, APP_URL
+# edit .env: SHOPIFY_API_KEY, SHOPIFY_API_SECRET, DATABASE_URL, SESSION_SECRET (required, non-default), ENCRYPTION_KEY, APP_URL
 ```
 Shopify must reach your callback over **HTTPS**, so for local testing expose port 8000 with a tunnel and use that URL
 as `APP_URL` (and in the app's redirect URL, and set `COOKIE_SECURE=true`):
@@ -76,5 +76,5 @@ Interactive docs: `/docs`.
 - Not built: installs started *from Shopify* (App Store button / admin) - the callback only accepts installs started
   from Connect Shopify; and the mandatory privacy webhooks (`customers/data_request`, `customers/redact`, `shop/redact`)
   plus `app/uninstalled`, which you need before an App Store listing.
-- Scheduled times from the picker have no timezone; they're interpreted in the database server's timezone.
+- Scheduled times are converted from the browser's local time to UTC before saving, so the scheduler fires at the correct moment regardless of server timezone.
 - **Rotate any real credentials** that were in the old ZIP's `backend/.env`.
